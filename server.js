@@ -8,12 +8,13 @@ app.use(cors());
 
 const PORT = process.env.PORT || 3000;
 
-// 🔥 TRACKERS PÚBLICOS
+// 🔥 TRACKERS PÚBLICOS (O Nitro)
 const TRACKERS = [
   "udp://tracker.openbittorrent.com:80/announce",
   "udp://tracker.opentrackr.org:1337/announce",
   "udp://tracker.coppersurfer.tk:6969/announce",
-  "udp://p4p.arenabg.com:1337/announce"
+  "udp://p4p.arenabg.com:1337/announce",
+  "udp://tracker.leechers-paradise.org:6969/announce"
 ].map(tr => `&tr=${encodeURIComponent(tr)}`).join('');
 
 const blacklist = ["apk","android","windows","linux","mac","crack","software","game","setup","tool","plugin","x64","x86","iso","repack", "camrip", "ts"];
@@ -29,6 +30,9 @@ function ehFilme(nome) {
 }
 function scoreBR(nome) { return prioridadeBR.some(p => nome.toLowerCase().includes(p)) ? 1 : 0; }
 
+// ==========================================================
+// 🕷️ FONTE 1: 1337x
+// ==========================================================
 async function search1337x(query) {
   try {
     const url = `https://www.1377x.to/search/${encodeURIComponent(query)}/1/`;
@@ -59,6 +63,9 @@ async function getMagnet1337x(url) {
   } catch { return null; }
 }
 
+// ==========================================================
+// 🏴‍☠️ FONTE 2: THE PIRATE BAY
+// ==========================================================
 async function searchPirateBay(query) {
   try {
     const url = `https://apibay.org/q.php?q=${encodeURIComponent(query)}`;
@@ -77,6 +84,9 @@ async function searchPirateBay(query) {
   } catch (err) { return []; }
 }
 
+// ==========================================================
+// 🍿 FONTE 3: YTS API
+// ==========================================================
 async function searchYTS(query) {
   try {
     const url = `https://yts.mx/api/v2/list_movies.json?query_term=${encodeURIComponent(query)}`;
@@ -95,41 +105,26 @@ async function searchYTS(query) {
 }
 
 // ==========================================================
-// 🇧🇷 FONTE 4: ADDON BRAZUCA DO STREMIO (SUA DESCOBERTA!)
+// 🇧🇷 FONTE 4: ADDON BRAZUCA DO STREMIO
 // ==========================================================
 async function searchBrazucaAddon(imdbId, tituloQuery) {
   if (!imdbId) return [];
   try {
-    // O pulo do gato: Acessamos o Stremio deles usando o ID do IMDB!
     const url = `https://94c8cb9f702d-brazuca-torrents.baby-beamup.club/stream/movie/${imdbId}.json`;
     const { data } = await axios.get(url, { timeout: 8000 });
     let results = [];
-    
     if (data && data.streams) {
       data.streams.forEach(s => {
-        // O Stremio manda o nome cheio de quebras de linha (\n)
         let rawTitle = s.title || "";
-        
-        // Extrai o tamanho se houver
         let sizeMatch = rawTitle.match(/\d+(?:\.\d+)?\s*(?:GB|MB)/i);
         let size = sizeMatch ? sizeMatch[0] : "N/A";
-        
-        // Monta o nome para ficar bonito
         let cleanName = `${tituloQuery} ${rawTitle.replace(/\n/g, ' ')} Dublado Dual`;
         
         let magnet = s.url;
-        if (!magnet && s.infoHash) {
-            magnet = `magnet:?xt=urn:btih:${s.infoHash}${TRACKERS}`;
-        }
+        if (!magnet && s.infoHash) magnet = `magnet:?xt=urn:btih:${s.infoHash}${TRACKERS}`;
 
         if (magnet) {
-            results.push({ 
-                name: cleanName, 
-                seeders: 50, // Stremio não manda seeders exatos, fixamos 50
-                size: size, 
-                magnet: magnet, 
-                origin: "Brazuca" 
-            });
+            results.push({ name: cleanName, seeders: 50, size: size, magnet: magnet, origin: "Brazuca" });
         }
       });
     }
@@ -137,9 +132,64 @@ async function searchBrazucaAddon(imdbId, tituloQuery) {
   } catch (err) { return []; }
 }
 
+// ==========================================================
+// 🦖 FONTE 5: TORRENTIO (O GODZILLA MUNDIAL)
+// ==========================================================
+async function searchTorrentio(imdbId, tituloQuery) {
+  if (!imdbId) return [];
+  try {
+    const url = `https://torrentio.strem.fun/stream/movie/${imdbId}.json`;
+    // Timeout um pouco maior porque o Torrentio varre a internet inteira
+    const { data } = await axios.get(url, { timeout: 10000 });
+    let results = [];
+    
+    if (data && data.streams) {
+      data.streams.forEach(s => {
+        let rawTitle = s.title || "";
+        let rawName = s.name || "Torrentio";
+        
+        // Extrai o provedor (ex: TorrentGalaxy, RARBG)
+        let provider = rawName.split('\n')[0];
+
+        // Tenta achar o número de seeders pelo ícone 👤
+        let seedersMatch = rawTitle.match(/👤\s*(\d+)/);
+        let seeders = seedersMatch ? parseInt(seedersMatch[1]) : 15;
+
+        // Extrai o tamanho
+        let sizeMatch = rawTitle.match(/\d+(?:\.\d+)?\s*(?:GB|MB)/i);
+        let size = sizeMatch ? sizeMatch[0] : "N/A";
+
+        // Extrai a qualidade para colocar no nome
+        let qualMatch = rawTitle.match(/1080p|720p|4k|2160p/i);
+        let quality = qualMatch ? qualMatch[0] : "HD";
+
+        let cleanName = `${tituloQuery} ${quality} [Via ${provider}]`;
+
+        let magnet = s.url;
+        if (!magnet && s.infoHash) magnet = `magnet:?xt=urn:btih:${s.infoHash}${TRACKERS}`;
+
+        if (magnet) {
+            results.push({ 
+                name: cleanName, 
+                seeders: seeders, 
+                size: size, 
+                magnet: magnet, 
+                origin: `Torrentio` 
+            });
+        }
+      });
+    }
+    // Retorna os 5 melhores resultados do Torrentio para não afogar a sua tela
+    return results.slice(0, 5);
+  } catch (err) { return []; }
+}
+
+// ==========================================================
+// 🚀 ROTA PRINCIPAL (AS 5 FONTES)
+// ==========================================================
 app.get("/streams", async (req, res) => {
   const query = req.query.q;
-  const imdb = req.query.imdb; // AGORA RECEBE O ID DO IMDB!
+  const imdb = req.query.imdb;
 
   if (!query) return res.status(400).json({ error: "Informe um filme" });
 
@@ -151,14 +201,16 @@ app.get("/streams", async (req, res) => {
       if (r.length > 0) { res1337x = r; break; }
     }
 
-    // 🚀 O MEGAZORD AGORA TEM 4 PERNAS (Busca tudo ao mesmo tempo)
-    const [resPirateBay, resYTS, resBrazuca] = await Promise.all([
+    // 🚀 LIGA TODOS OS MOTORES AO MESMO TEMPO
+    const [resPirateBay, resYTS, resBrazuca, resTorrentio] = await Promise.all([
       searchPirateBay(query),
       searchYTS(query),
-      searchBrazucaAddon(imdb, query) // Chama a sua descoberta!
+      searchBrazucaAddon(imdb, query),
+      searchTorrentio(imdb, query) // O Godzilla foi ativado!
     ]);
 
-    let allResults = [...resBrazuca, ...res1337x, ...resPirateBay, ...resYTS];
+    // Junta as 5 listas de torrents numa só
+    let allResults = [...resBrazuca, ...resTorrentio, ...res1337x, ...resPirateBay, ...resYTS];
     let streams = [];
 
     for (let item of allResults) {
@@ -176,6 +228,7 @@ app.get("/streams", async (req, res) => {
       });
     }
 
+    // Ordenação Implacável: Brasil > Seeders
     streams.sort((a, b) => {
       if (a.br !== b.br) return b.br - a.br;
       return b.seeders - a.seeders;
@@ -189,5 +242,5 @@ app.get("/streams", async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log("🔥 API MEGAZORD + BRAZUCA rodando!");
+  console.log("🔥 API 5 MOTORES (INCLUINDO TORRENTIO) RODANDO!");
 });
