@@ -20,13 +20,11 @@ const blacklist = ["apk","android","windows","linux","mac","crack","software","g
 const prioridadeBR = ["dublado","dual","pt-br","portuguese"];
 
 function limparNome(nome) { return nome.replace(/\./g, " ").replace(/\s+/g, " ").trim(); }
-function ehFilme(nome) {
-  return !blacklist.some(b => nome.toLowerCase().includes(b));
-}
+function ehFilme(nome) { return !blacklist.some(b => nome.toLowerCase().includes(b)); }
 function scoreBR(nome) { return prioridadeBR.some(p => nome.toLowerCase().includes(p)) ? 1 : 0; }
 
 // ==========================================================
-// 🕷️ FONTE 1: 1337X (A VOLTA DOS QUE NÃO FORAM - MODO RÁPIDO)
+// 🕷️ FONTE 1: 1337X
 // ==========================================================
 async function search1337x(query) {
   if (!query) return [];
@@ -69,9 +67,8 @@ async function searchPirateBay(tituloOriginal) {
     data.forEach(t => {
       if (t.category.startsWith('2') && ehFilme(t.name)) {
         const magnet = `magnet:?xt=urn:btih:${t.info_hash}&dn=${encodeURIComponent(t.name)}${TRACKERS}`;
-        const sizeBytes = parseInt(t.size);
-        const sizeFormated = sizeBytes > 1073741824 ? (sizeBytes / 1073741824).toFixed(2) + " GB" : (sizeBytes / 1048576).toFixed(2) + " MB";
-        results.push({ name: t.name, seeders: parseInt(t.seeders), size: sizeFormated, magnet, origin: "PirateBay" });
+        let size = (parseInt(t.size) > 1073741824) ? (parseInt(t.size) / 1073741824).toFixed(2) + " GB" : (parseInt(t.size) / 1048576).toFixed(2) + " MB";
+        results.push({ name: t.name, seeders: parseInt(t.seeders), size: size, magnet, origin: "PirateBay" });
       }
     });
     return results.slice(0, 4);
@@ -79,49 +76,21 @@ async function searchPirateBay(tituloOriginal) {
 }
 
 // ==========================================================
-// 🍿 FONTE 3: YTS API
+// 🇧🇷 FONTE 3: BRAZUCA (IMDB)
 // ==========================================================
-async function searchYTS(tituloOriginal) {
-  if (!tituloOriginal) return [];
-  try {
-    const url = `https://yts.mx/api/v2/list_movies.json?query_term=${encodeURIComponent(tituloOriginal)}`;
-    const { data } = await axios.get(url, { timeout: 6000 });
-    if (!data.data || !data.data.movies) return [];
-    let results = [];
-    data.data.movies.forEach(movie => {
-      movie.torrents.forEach(t => {
-        const magnet = `magnet:?xt=urn:btih:${t.hash}&dn=${encodeURIComponent(movie.title)}${TRACKERS}`;
-        results.push({ name: `${movie.title} ${t.quality} YTS`, seeders: t.seeds, size: t.size, magnet, origin: "YTS" });
-      });
-    });
-    return results;
-  } catch (err) { return []; }
-}
-
-// ==========================================================
-// 🇧🇷 FONTE 4: BRAZUCA E TORRENTIO (IMDB)
-// ==========================================================
-async function searchStremioAddon(imdbId, tituloBR, addonUrl, originName) {
+async function searchBrazuca(imdbId, tituloBR) {
   if (!imdbId || imdbId === "None" || imdbId === "") return [];
   try {
-    const { data } = await axios.get(`${addonUrl}${imdbId}.json`, { timeout: 8000 });
+    const { data } = await axios.get(`https://94c8cb9f702d-brazuca-torrents.baby-beamup.club/stream/movie/${imdbId}.json`, { timeout: 8000 });
     let results = [];
     if (data && data.streams) {
       data.streams.forEach(s => {
         let rawTitle = s.title || "";
-        let rawName = s.name || originName;
-        let provider = rawName.split('\n')[0];
-        let seedersMatch = rawTitle.match(/👤\s*(\d+)/);
-        let seeders = seedersMatch ? parseInt(seedersMatch[1]) : (originName === "Brazuca" ? 50 : 15);
         let sizeMatch = rawTitle.match(/\d+(?:\.\d+)?\s*(?:GB|MB)/i);
         let size = sizeMatch ? sizeMatch[0] : "N/A";
-        let qualMatch = rawTitle.match(/1080p|720p|4k|2160p/i);
-        let quality = qualMatch ? qualMatch[0] : "SD";
-        
-        let cleanName = originName === "Brazuca" ? `${tituloBR} ${rawTitle.replace(/\n/g, ' ')} Dublado Dual` : `${tituloBR} ${quality} [Via ${provider}]`;
+        let cleanName = `${tituloBR} ${rawTitle.replace(/\n/g, ' ')} Dublado Dual`;
         let magnet = s.url || (s.infoHash ? `magnet:?xt=urn:btih:${s.infoHash}${TRACKERS}` : null);
-        
-        if (magnet) results.push({ name: cleanName, seeders, size, magnet, origin: originName });
+        if (magnet) results.push({ name: cleanName, seeders: 60, size, magnet, origin: "Brazuca" });
       });
     }
     return results.slice(0, 6);
@@ -129,7 +98,41 @@ async function searchStremioAddon(imdbId, tituloBR, addonUrl, originName) {
 }
 
 // ==========================================================
-// 🚀 ROTA PRINCIPAL: AS 5 FONTES AO MESMO TEMPO
+// 🦖 FONTE 4: TORRENTIO HACKEADO (COMANDO + MICOLEÃO)
+// ==========================================================
+async function searchTorrentio(imdbId, tituloBR) {
+  if (!imdbId || imdbId === "None" || imdbId === "") return [];
+  try {
+    // 🔥 A SUA CONFIGURAÇÃO DE OURO AQUI:
+    const config = "providers=yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,torrentgalaxy,magnetdl,comando,torrent9,micoleaodublado|language=portuguese";
+    const url = `https://torrentio.strem.fun/${config}/stream/movie/${imdbId}.json`;
+    
+    const { data } = await axios.get(url, { timeout: 9000 });
+    let results = [];
+    if (data && data.streams) {
+      data.streams.forEach(s => {
+        let rawTitle = s.title || "";
+        let rawName = s.name || "Torrentio";
+        let provider = rawName.split('\n')[0];
+        let seedersMatch = rawTitle.match(/👤\s*(\d+)/);
+        let seeders = seedersMatch ? parseInt(seedersMatch[1]) : 20;
+        let sizeMatch = rawTitle.match(/\d+(?:\.\d+)?\s*(?:GB|MB)/i);
+        let size = sizeMatch ? sizeMatch[0] : "N/A";
+        let qualMatch = rawTitle.match(/1080p|720p|4k|2160p/i);
+        let quality = qualMatch ? qualMatch[0] : "SD";
+        
+        let cleanName = `${tituloBR} ${quality} [Via ${provider}]`;
+        let magnet = s.url || (s.infoHash ? `magnet:?xt=urn:btih:${s.infoHash}${TRACKERS}` : null);
+        
+        if (magnet) results.push({ name: cleanName, seeders, size, magnet, origin: "Torrentio" });
+      });
+    }
+    return results.slice(0, 6);
+  } catch (err) { return []; }
+}
+
+// ==========================================================
+// 🚀 ROTA PRINCIPAL: AS 4 FONTES AO MESMO TEMPO
 // ==========================================================
 app.get("/streams", async (req, res) => {
   const titulo_br = req.query.br || "";
@@ -141,16 +144,15 @@ app.get("/streams", async (req, res) => {
   const safeOrig = titulo_orig.replace(/[^\w\s-]/gi, '').replace(/\s+/g, ' ').trim();
 
   try {
-    // 🔥 LIGA TUDO EM PARALELO (Sem loop, super rápido!)
-    const [resPirateBay, resYTS, resBrazuca, resTorrentio, res1337x] = await Promise.all([
+    const [resBrazuca, resTorrentio, resPirateBay, res1337x] = await Promise.all([
+      searchBrazuca(imdb, titulo_br),
+      searchTorrentio(imdb, titulo_br), // O Torrentio com Comando Torrents!
       searchPirateBay(safeOrig),
-      searchYTS(safeOrig),
-      searchStremioAddon(imdb, titulo_br, "https://94c8cb9f702d-brazuca-torrents.baby-beamup.club/stream/movie/", "Brazuca"),
-      searchStremioAddon(imdb, titulo_br, "https://torrentio.strem.fun/stream/movie/", "Torrentio"),
-      search1337x(titulo_br) // Busca o BR no 1337x pra garantir
+      search1337x(titulo_br)
     ]);
 
-    let allResults = [...resBrazuca, ...resTorrentio, ...resPirateBay, ...res1337x, ...resYTS];
+    // Colocando Brazuca e Torrentio primeiro na lista final!
+    let allResults = [...resBrazuca, ...resTorrentio, ...resPirateBay, ...res1337x];
     let streams = [];
 
     for (let item of allResults) {
@@ -158,13 +160,16 @@ app.get("/streams", async (req, res) => {
       if (!magnet && item.detail) magnet = await getMagnet1337x(item.detail);
       if (!magnet) continue;
 
+      // Se for do Comando ou Micoleão, a gente já diz que é BR
+      let isBR = item.origin === "Brazuca" || item.name.toLowerCase().includes("comando") || item.name.toLowerCase().includes("micoleao") || scoreBR(item.name);
+
       streams.push({
         title: `[${item.origin}] ` + limparNome(item.name),
         quality: item.name.match(/1080p|720p|2160p|4k/i)?.[0] || "SD",
         seeders: item.seeders,
         size: item.size,
         magnet: magnet,
-        br: scoreBR(item.name)
+        br: isBR ? 1 : 0
       });
     }
 
@@ -175,4 +180,4 @@ app.get("/streams", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log("🔥 API 5 MOTORES BLINDADA RODANDO!"));
+app.listen(PORT, () => console.log("🔥 API 4 MOTORES (COM COMANDO TORRENTS) RODANDO!"));
