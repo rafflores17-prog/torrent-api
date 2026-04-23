@@ -14,181 +14,307 @@ const TRACKERS = [
   "udp://tracker.coppersurfer.tk:6969/announce"
 ].map(tr => `&tr=${encodeURIComponent(tr)}`).join('');
 
-// 🕵️‍♂️ O DISFARCE: Faz o Node.js fingir que é um navegador de verdade
 const FAKE_BROWSER = { 
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" 
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36" 
 };
 
-const blacklist = ["apk","android","windows","linux","mac","crack","software","game","setup","tool","plugin","iso","repack", "camrip", "ts"];
-function limparNome(nome) { return nome.replace(/\./g, " ").replace(/\s+/g, " ").trim(); }
-function ehFilme(nome) { return !blacklist.some(b => nome.toLowerCase().includes(b)); }
-function scoreBR(nome) { return ["dublado","dual","pt-br","portuguese"].some(p => nome.toLowerCase().includes(p)) ? 1 : 0; }
+// 🚫 BLACKLIST PESADA (ANTI LIXO REAL)
+const blacklist = [
+  "apk","android","windows","linux","mac","crack","software",
+  "game","setup","tool","plugin","iso","repack","camrip","ts",
+  "adobe","photoshop","office","driver","update","x64","x86"
+];
 
-// ==========================================================
-// 🏴‍☠️ FONTE 1: THE PIRATE BAY
-// ==========================================================
-async function searchPirateBay(tituloOriginal) {
-  if (!tituloOriginal) return [];
-  try {
-    const url = `https://apibay.org/q.php?q=${encodeURIComponent(tituloOriginal)}`;
-    const { data } = await axios.get(url, { timeout: 6000 });
-    if (!data || data[0].id === '0') return [];
-    let results = [];
-    data.forEach(t => {
-      if (t.category.startsWith('2') && ehFilme(t.name)) {
-        const magnet = `magnet:?xt=urn:btih:${t.info_hash}&dn=${encodeURIComponent(t.name)}${TRACKERS}`;
-        let size = (parseInt(t.size) > 1073741824) ? (parseInt(t.size) / 1073741824).toFixed(2) + " GB" : (parseInt(t.size) / 1048576).toFixed(2) + " MB";
-        results.push({ name: t.name, seeders: parseInt(t.seeders), size: size, magnet, origin: "PirateBay" });
-      }
-    });
-    return results.slice(0, 4);
-  } catch (err) { return []; }
+function limparNome(nome) {
+  return nome.replace(/\./g, " ").replace(/\s+/g, " ").trim();
+}
+
+function ehFilme(nome) {
+  nome = nome.toLowerCase();
+
+  if (blacklist.some(b => nome.includes(b))) return false;
+
+  // precisa ter ano OU qualidade OU nome válido
+  const temQualidade = /1080p|720p|2160p|4k/i.test(nome);
+  const temAno = /(19|20)\d{2}/.test(nome);
+
+  return temQualidade || temAno;
+}
+
+function scoreBR(nome) {
+  nome = nome.toLowerCase();
+  return ["dublado","dual","pt-br","portuguese"].some(p => nome.includes(p)) ? 1 : 0;
 }
 
 // ==========================================================
-// 🕷️ FONTE 2: 1337X
+// 🏴‍☠️ PIRATE BAY (COM ANO)
+// ==========================================================
+async function searchPirateBay(query) {
+  if (!query) return [];
+  try {
+    const url = `https://apibay.org/q.php?q=${encodeURIComponent(query)}`;
+    const { data } = await axios.get(url, { timeout: 6000 });
+
+    if (!data || data[0].id === '0') return [];
+
+    let results = [];
+
+    data.forEach(t => {
+      if (t.category.startsWith('2') && ehFilme(t.name)) {
+
+        const magnet = `magnet:?xt=urn:btih:${t.info_hash}&dn=${encodeURIComponent(t.name)}${TRACKERS}`;
+
+        let size = (parseInt(t.size) > 1073741824)
+          ? (parseInt(t.size) / 1073741824).toFixed(2) + " GB"
+          : (parseInt(t.size) / 1048576).toFixed(2) + " MB";
+
+        results.push({
+          name: t.name,
+          seeders: parseInt(t.seeders),
+          size,
+          magnet,
+          origin: "PirateBay"
+        });
+      }
+    });
+
+    return results.slice(0, 5);
+
+  } catch {
+    return [];
+  }
+}
+
+// ==========================================================
+// 🕷️ 1337X (MELHORADO)
 // ==========================================================
 async function search1337x(query) {
   if (!query) return [];
+
   try {
     const url = `https://www.1377x.to/search/${encodeURIComponent(query)}/1/`;
     const { data } = await axios.get(url, { headers: FAKE_BROWSER, timeout: 8000 });
+
     const $ = cheerio.load(data);
     let results = [];
+
     $("table tbody tr").each((i, el) => {
       const name = $(el).find("td.name a:nth-child(2)").text();
       const link = $(el).find("td.name a:nth-child(2)").attr("href");
       const seeders = parseInt($(el).find("td.seeds").text()) || 0;
-      let rawSize = $(el).find("td.size").text();
-      let size = rawSize.includes("GB") ? rawSize.split("GB")[0] + " GB" : (rawSize.includes("MB") ? rawSize.split("MB")[0] + " MB" : "N/A");
-      if (name && link && ehFilme(name)) {
-        results.push({ name, seeders, size, detail: "https://www.1377x.to" + link, origin: "1337x" });
-      }
+
+      if (!name || !link) return;
+
+      if (!ehFilme(name)) return;
+
+      results.push({
+        name,
+        seeders,
+        detail: "https://www.1377x.to" + link,
+        origin: "1337x"
+      });
     });
-    return results.slice(0, 3);
-  } catch (err) { return []; }
+
+    return results.slice(0, 4);
+
+  } catch {
+    return [];
+  }
 }
 
 async function getMagnet1337x(url) {
   try {
     const { data } = await axios.get(url, { headers: FAKE_BROWSER, timeout: 5000 });
     return cheerio.load(data)('a[href^="magnet:?xt="]').attr("href") || null;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 // ==========================================================
-// 🇧🇷 FONTE 3: BRAZUCA (COM DISFARCE ANTIBLOQUEIO)
+// 🇧🇷 BRAZUCA
 // ==========================================================
 async function searchBrazuca(imdbId, tituloBR) {
-  if (!imdbId || imdbId === "None" || imdbId === "") return [];
+  if (!imdbId) return [];
+
   try {
-    const { data } = await axios.get(`https://94c8cb9f702d-brazuca-torrents.baby-beamup.club/stream/movie/${imdbId}.json`, { 
-      headers: FAKE_BROWSER, timeout: 10000 
-    });
+    const { data } = await axios.get(
+      `https://94c8cb9f702d-brazuca-torrents.baby-beamup.club/stream/movie/${imdbId}.json`,
+      { headers: FAKE_BROWSER, timeout: 10000 }
+    );
+
     let results = [];
-    if (data && data.streams) {
+
+    if (data?.streams) {
       data.streams.forEach(s => {
-        let rawTitle = s.title || "";
-        let sizeMatch = rawTitle.match(/\d+(?:\.\d+)?\s*(?:GB|MB)/i);
+        let raw = s.title || "";
+
+        let sizeMatch = raw.match(/\d+(?:\.\d+)?\s*(GB|MB)/i);
         let size = sizeMatch ? sizeMatch[0] : "N/A";
-        let cleanName = `${tituloBR} ${rawTitle.replace(/\n/g, ' ')} Dublado Dual`;
-        let magnet = s.url || (s.infoHash ? `magnet:?xt=urn:btih:${s.infoHash}${TRACKERS}` : null);
-        if (magnet) results.push({ name: cleanName, seeders: 60, size, magnet, origin: "Brazuca" });
+
+        let magnet = s.url || (s.infoHash
+          ? `magnet:?xt=urn:btih:${s.infoHash}${TRACKERS}`
+          : null
+        );
+
+        if (magnet) {
+          results.push({
+            name: `${tituloBR} ${raw}`,
+            seeders: 80,
+            size,
+            magnet,
+            origin: "Brazuca"
+          });
+        }
       });
     }
-    return results.slice(0, 6);
-  } catch (err) { return []; }
+
+    return results.slice(0, 8);
+
+  } catch {
+    return [];
+  }
 }
 
 // ==========================================================
-// 🦖 FONTE 4: TORRENTIO HACKEADO (COMANDO + MICOLEÃO)
+// 🦖 TORRENTIO
 // ==========================================================
 async function searchTorrentio(imdbId, tituloBR) {
-  if (!imdbId || imdbId === "None" || imdbId === "") return [];
+  if (!imdbId) return [];
+
   try {
-    // 🔥 A SUA URL CUSTOMIZADA EXATA AQUI!
-    const config = "providers=yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,torrentgalaxy,magnetdl,comando,torrent9,micoleaodublado,horriblesubs|language=portuguese,spanish,italian";
+    const config = "providers=yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,torrentgalaxy,magnetdl,comando,micoleaodublado|language=portuguese";
+
     const url = `https://torrentio.strem.fun/${config}/stream/movie/${imdbId}.json`;
-    
-    // Disfarce e tempo maior para o Torrentio não bloquear a gente
+
     const { data } = await axios.get(url, { headers: FAKE_BROWSER, timeout: 12000 });
+
     let results = [];
-    if (data && data.streams) {
+
+    if (data?.streams) {
       data.streams.forEach(s => {
-        let rawTitle = s.title || "";
-        let rawName = s.name || "Torrentio";
-        let provider = rawName.split('\n')[0];
-        let seedersMatch = rawTitle.match(/👤\s*(\d+)/);
-        let seeders = seedersMatch ? parseInt(seedersMatch[1]) : 20;
-        let sizeMatch = rawTitle.match(/\d+(?:\.\d+)?\s*(?:GB|MB)/i);
+
+        let raw = s.title || "";
+        let provider = (s.name || "Torrentio").split('\n')[0];
+
+        let seeders = parseInt(raw.match(/👤\s*(\d+)/)?.[1] || 30);
+
+        let sizeMatch = raw.match(/\d+(?:\.\d+)?\s*(GB|MB)/i);
         let size = sizeMatch ? sizeMatch[0] : "N/A";
-        let qualMatch = rawTitle.match(/1080p|720p|4k|2160p/i);
-        let quality = qualMatch ? qualMatch[0] : "SD";
-        
-        let cleanName = `${tituloBR} ${quality} [Via ${provider}]`;
-        let magnet = s.url || (s.infoHash ? `magnet:?xt=urn:btih:${s.infoHash}${TRACKERS}` : null);
-        
-        if (magnet) results.push({ name: cleanName, seeders, size, magnet, origin: "Torrentio" });
+
+        let quality = raw.match(/1080p|720p|2160p|4k/i)?.[0] || "SD";
+
+        let magnet = s.url || (s.infoHash
+          ? `magnet:?xt=urn:btih:${s.infoHash}${TRACKERS}`
+          : null
+        );
+
+        if (magnet) {
+          results.push({
+            name: `${tituloBR} ${quality} [${provider}]`,
+            seeders,
+            size,
+            magnet,
+            origin: "Torrentio"
+          });
+        }
       });
     }
-    return results.slice(0, 8);
-  } catch (err) { return []; }
+
+    return results.slice(0, 10);
+
+  } catch {
+    return [];
+  }
 }
 
 // ==========================================================
-// 🚀 ROTA PRINCIPAL
+// 🚀 ROTA PRINCIPAL (INTELIGENTE)
 // ==========================================================
 app.get("/streams", async (req, res) => {
   const titulo_br = req.query.br || "";
   const titulo_orig = req.query.orig || titulo_br;
   const imdb = req.query.imdb || "";
+  const year = req.query.year || "";
 
-  if (!titulo_br) return res.status(400).json({ error: "Informe um filme" });
+  if (!titulo_br) {
+    return res.status(400).json({ error: "Informe um filme" });
+  }
 
-  const safeOrig = titulo_orig.replace(/[^\w\s-]/gi, '').replace(/\s+/g, ' ').trim();
+  const query = `${titulo_orig} ${year}`.trim();
 
   try {
-    const [resBrazuca, resTorrentio, resPirateBay, res1337x] = await Promise.all([
+    const [brazuca, torrentio, piratebay, x1337] = await Promise.all([
       searchBrazuca(imdb, titulo_br),
-      searchTorrentio(imdb, titulo_br), 
-      searchPirateBay(safeOrig),
-      search1337x(titulo_br)
+      searchTorrentio(imdb, titulo_br),
+      searchPirateBay(query),
+      search1337x(query)
     ]);
 
-    let allResults = [...resBrazuca, ...resTorrentio, ...resPirateBay, ...res1337x];
+    let all = [...brazuca, ...torrentio, ...piratebay, ...x1337];
+
     let streams = [];
 
-    for (let item of allResults) {
+    for (let item of all) {
       let magnet = item.magnet;
-      if (!magnet && item.detail) magnet = await getMagnet1337x(item.detail);
+
+      if (!magnet && item.detail) {
+        magnet = await getMagnet1337x(item.detail);
+      }
+
       if (!magnet) continue;
 
-      let isBR = item.origin === "Brazuca" || item.name.toLowerCase().includes("comando") || item.name.toLowerCase().includes("micoleao") || scoreBR(item.name);
+      let nome = limparNome(item.name.toLowerCase());
+
+      if (!ehFilme(nome)) continue;
+
+      let isBR =
+        item.origin === "Brazuca" ||
+        nome.includes("dublado") ||
+        nome.includes("dual");
+
+      let score = 0;
+
+      if (item.origin === "Brazuca") score += 100;
+      else if (item.origin === "Torrentio") score += 80;
+
+      if (isBR) score += 20;
+
+      score += item.seeders || 0;
 
       streams.push({
-        title: `[${item.origin}] ` + limparNome(item.name),
+        title: `[${item.origin}] ${item.name}`,
         quality: item.name.match(/1080p|720p|2160p|4k/i)?.[0] || "SD",
-        seeders: item.seeders,
-        size: item.size,
-        magnet: magnet,
-        br: isBR ? 1 : 0
+        seeders: item.seeders || 0,
+        size: item.size || "N/A",
+        magnet,
+        br: isBR ? 1 : 0,
+        score
       });
     }
 
-    // Filtra duplicatas
-    const uniqueStreams = [];
-    const seenMagnets = new Set();
-    for (let s of streams) {
-      if (!seenMagnets.has(s.magnet)) {
-        seenMagnets.add(s.magnet);
-        uniqueStreams.push(s);
-      }
-    }
+    // remove duplicados
+    const seen = new Set();
+    const unique = streams.filter(s => {
+      if (seen.has(s.magnet)) return false;
+      seen.add(s.magnet);
+      return true;
+    });
 
-    res.json({ query: titulo_br, total: uniqueStreams.length, streams: uniqueStreams });
+    // 🔥 ORDENA INTELIGENTE
+    unique.sort((a, b) => b.score - a.score);
+
+    res.json({
+      query: titulo_br,
+      total: unique.length,
+      streams: unique.slice(0, 20)
+    });
+
   } catch (err) {
     res.status(500).json({ error: "Erro geral" });
   }
 });
 
-app.listen(PORT, () => console.log("🔥 API ANTIBLOQUEIO RODANDO!"));
+app.listen(PORT, () => {
+  console.log("🔥 API PRO ANTILIXO RODANDO!");
+});
