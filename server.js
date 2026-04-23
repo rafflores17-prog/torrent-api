@@ -8,54 +8,24 @@ app.use(cors());
 
 const PORT = process.env.PORT || 3000;
 
-// 🔥 TRACKERS PÚBLICOS
 const TRACKERS = [
   "udp://tracker.openbittorrent.com:80/announce",
   "udp://tracker.opentrackr.org:1337/announce",
-  "udp://tracker.coppersurfer.tk:6969/announce",
-  "udp://p4p.arenabg.com:1337/announce"
+  "udp://tracker.coppersurfer.tk:6969/announce"
 ].map(tr => `&tr=${encodeURIComponent(tr)}`).join('');
 
-const blacklist = ["apk","android","windows","linux","mac","crack","software","game","setup","tool","plugin","iso","repack", "camrip", "ts"];
-const prioridadeBR = ["dublado","dual","pt-br","portuguese"];
+// 🕵️‍♂️ O DISFARCE: Faz o Node.js fingir que é um navegador de verdade
+const FAKE_BROWSER = { 
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" 
+};
 
+const blacklist = ["apk","android","windows","linux","mac","crack","software","game","setup","tool","plugin","iso","repack", "camrip", "ts"];
 function limparNome(nome) { return nome.replace(/\./g, " ").replace(/\s+/g, " ").trim(); }
 function ehFilme(nome) { return !blacklist.some(b => nome.toLowerCase().includes(b)); }
-function scoreBR(nome) { return prioridadeBR.some(p => nome.toLowerCase().includes(p)) ? 1 : 0; }
+function scoreBR(nome) { return ["dublado","dual","pt-br","portuguese"].some(p => nome.toLowerCase().includes(p)) ? 1 : 0; }
 
 // ==========================================================
-// 🕷️ FONTE 1: 1337X
-// ==========================================================
-async function search1337x(query) {
-  if (!query) return [];
-  try {
-    const url = `https://www.1377x.to/search/${encodeURIComponent(query)}/1/`;
-    const { data } = await axios.get(url, { headers: { "User-Agent": "Mozilla/5.0" }, timeout: 8000 });
-    const $ = cheerio.load(data);
-    let results = [];
-    $("table tbody tr").each((i, el) => {
-      const name = $(el).find("td.name a:nth-child(2)").text();
-      const link = $(el).find("td.name a:nth-child(2)").attr("href");
-      const seeders = parseInt($(el).find("td.seeds").text()) || 0;
-      let rawSize = $(el).find("td.size").text();
-      let size = rawSize.includes("GB") ? rawSize.split("GB")[0] + " GB" : (rawSize.includes("MB") ? rawSize.split("MB")[0] + " MB" : "N/A");
-      if (name && link && ehFilme(name)) {
-        results.push({ name, seeders, size, detail: "https://www.1377x.to" + link, origin: "1337x" });
-      }
-    });
-    return results.slice(0, 4);
-  } catch (err) { return []; }
-}
-
-async function getMagnet1337x(url) {
-  try {
-    const { data } = await axios.get(url, { headers: { "User-Agent": "Mozilla/5.0" }, timeout: 5000 });
-    return cheerio.load(data)('a[href^="magnet:?xt="]').attr("href") || null;
-  } catch { return null; }
-}
-
-// ==========================================================
-// 🏴‍☠️ FONTE 2: THE PIRATE BAY
+// 🏴‍☠️ FONTE 1: THE PIRATE BAY
 // ==========================================================
 async function searchPirateBay(tituloOriginal) {
   if (!tituloOriginal) return [];
@@ -76,12 +46,45 @@ async function searchPirateBay(tituloOriginal) {
 }
 
 // ==========================================================
-// 🇧🇷 FONTE 3: BRAZUCA (IMDB)
+// 🕷️ FONTE 2: 1337X
+// ==========================================================
+async function search1337x(query) {
+  if (!query) return [];
+  try {
+    const url = `https://www.1377x.to/search/${encodeURIComponent(query)}/1/`;
+    const { data } = await axios.get(url, { headers: FAKE_BROWSER, timeout: 8000 });
+    const $ = cheerio.load(data);
+    let results = [];
+    $("table tbody tr").each((i, el) => {
+      const name = $(el).find("td.name a:nth-child(2)").text();
+      const link = $(el).find("td.name a:nth-child(2)").attr("href");
+      const seeders = parseInt($(el).find("td.seeds").text()) || 0;
+      let rawSize = $(el).find("td.size").text();
+      let size = rawSize.includes("GB") ? rawSize.split("GB")[0] + " GB" : (rawSize.includes("MB") ? rawSize.split("MB")[0] + " MB" : "N/A");
+      if (name && link && ehFilme(name)) {
+        results.push({ name, seeders, size, detail: "https://www.1377x.to" + link, origin: "1337x" });
+      }
+    });
+    return results.slice(0, 3);
+  } catch (err) { return []; }
+}
+
+async function getMagnet1337x(url) {
+  try {
+    const { data } = await axios.get(url, { headers: FAKE_BROWSER, timeout: 5000 });
+    return cheerio.load(data)('a[href^="magnet:?xt="]').attr("href") || null;
+  } catch { return null; }
+}
+
+// ==========================================================
+// 🇧🇷 FONTE 3: BRAZUCA (COM DISFARCE ANTIBLOQUEIO)
 // ==========================================================
 async function searchBrazuca(imdbId, tituloBR) {
   if (!imdbId || imdbId === "None" || imdbId === "") return [];
   try {
-    const { data } = await axios.get(`https://94c8cb9f702d-brazuca-torrents.baby-beamup.club/stream/movie/${imdbId}.json`, { timeout: 8000 });
+    const { data } = await axios.get(`https://94c8cb9f702d-brazuca-torrents.baby-beamup.club/stream/movie/${imdbId}.json`, { 
+      headers: FAKE_BROWSER, timeout: 10000 
+    });
     let results = [];
     if (data && data.streams) {
       data.streams.forEach(s => {
@@ -103,11 +106,12 @@ async function searchBrazuca(imdbId, tituloBR) {
 async function searchTorrentio(imdbId, tituloBR) {
   if (!imdbId || imdbId === "None" || imdbId === "") return [];
   try {
-    // 🔥 A SUA CONFIGURAÇÃO DE OURO AQUI:
-    const config = "providers=yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,torrentgalaxy,magnetdl,comando,torrent9,micoleaodublado|language=portuguese";
+    // 🔥 A SUA URL CUSTOMIZADA EXATA AQUI!
+    const config = "providers=yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,torrentgalaxy,magnetdl,comando,torrent9,micoleaodublado,horriblesubs|language=portuguese,spanish,italian";
     const url = `https://torrentio.strem.fun/${config}/stream/movie/${imdbId}.json`;
     
-    const { data } = await axios.get(url, { timeout: 9000 });
+    // Disfarce e tempo maior para o Torrentio não bloquear a gente
+    const { data } = await axios.get(url, { headers: FAKE_BROWSER, timeout: 12000 });
     let results = [];
     if (data && data.streams) {
       data.streams.forEach(s => {
@@ -127,12 +131,12 @@ async function searchTorrentio(imdbId, tituloBR) {
         if (magnet) results.push({ name: cleanName, seeders, size, magnet, origin: "Torrentio" });
       });
     }
-    return results.slice(0, 6);
+    return results.slice(0, 8);
   } catch (err) { return []; }
 }
 
 // ==========================================================
-// 🚀 ROTA PRINCIPAL: AS 4 FONTES AO MESMO TEMPO
+// 🚀 ROTA PRINCIPAL
 // ==========================================================
 app.get("/streams", async (req, res) => {
   const titulo_br = req.query.br || "";
@@ -146,12 +150,11 @@ app.get("/streams", async (req, res) => {
   try {
     const [resBrazuca, resTorrentio, resPirateBay, res1337x] = await Promise.all([
       searchBrazuca(imdb, titulo_br),
-      searchTorrentio(imdb, titulo_br), // O Torrentio com Comando Torrents!
+      searchTorrentio(imdb, titulo_br), 
       searchPirateBay(safeOrig),
       search1337x(titulo_br)
     ]);
 
-    // Colocando Brazuca e Torrentio primeiro na lista final!
     let allResults = [...resBrazuca, ...resTorrentio, ...resPirateBay, ...res1337x];
     let streams = [];
 
@@ -160,7 +163,6 @@ app.get("/streams", async (req, res) => {
       if (!magnet && item.detail) magnet = await getMagnet1337x(item.detail);
       if (!magnet) continue;
 
-      // Se for do Comando ou Micoleão, a gente já diz que é BR
       let isBR = item.origin === "Brazuca" || item.name.toLowerCase().includes("comando") || item.name.toLowerCase().includes("micoleao") || scoreBR(item.name);
 
       streams.push({
@@ -173,11 +175,20 @@ app.get("/streams", async (req, res) => {
       });
     }
 
-    streams.sort((a, b) => (b.br - a.br) || (b.seeders - a.seeders));
-    res.json({ query: titulo_br, total: streams.length, streams });
+    // Filtra duplicatas
+    const uniqueStreams = [];
+    const seenMagnets = new Set();
+    for (let s of streams) {
+      if (!seenMagnets.has(s.magnet)) {
+        seenMagnets.add(s.magnet);
+        uniqueStreams.push(s);
+      }
+    }
+
+    res.json({ query: titulo_br, total: uniqueStreams.length, streams: uniqueStreams });
   } catch (err) {
     res.status(500).json({ error: "Erro geral" });
   }
 });
 
-app.listen(PORT, () => console.log("🔥 API 4 MOTORES (COM COMANDO TORRENTS) RODANDO!"));
+app.listen(PORT, () => console.log("🔥 API ANTIBLOQUEIO RODANDO!"));
