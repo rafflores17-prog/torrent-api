@@ -18,16 +18,24 @@ const TRACKERS = [
 ].map(tr => `&tr=${encodeURIComponent(tr)}`).join('');
 
 const blacklist = ["apk","android","windows","linux","mac","crack","software","game","setup","tool","plugin","x64","x86","iso","repack", "camrip", "ts"];
+// A whitelist continua aqui só pra gente usar na hora de extrair a qualidade depois
 const whitelist = ["1080p","720p","2160p","4k","bluray","webrip","web-dl","hdr","x264","x265"];
 const prioridadeBR = ["dublado","dual","pt-br","portuguese"];
 
 function limparNome(nome) { return nome.replace(/\./g, " ").replace(/\s+/g, " ").trim(); }
+
 function ehFilme(nome) {
   nome = nome.toLowerCase();
+  // 1. Rejeita o que for lixo (jogos, programas, etc)
   if (blacklist.some(b => nome.includes(b))) return false;
-  if (!whitelist.some(w => nome.includes(w))) return false;
+  
+  // 🔥 O SEGREDO DOS FILMES ANTIGOS:
+  // Comentei a linha abaixo! Agora não é mais obrigatório ter "1080p" no nome.
+  // if (!whitelist.some(w => nome.includes(w))) return false; 
+  
   return true;
 }
+
 function scoreBR(nome) { return prioridadeBR.some(p => nome.toLowerCase().includes(p)) ? 1 : 0; }
 
 // ==========================================================
@@ -161,7 +169,7 @@ async function searchTorrentio(imdbId, tituloQuery) {
 
         // Extrai a qualidade para colocar no nome
         let qualMatch = rawTitle.match(/1080p|720p|4k|2160p/i);
-        let quality = qualMatch ? qualMatch[0] : "HD";
+        let quality = qualMatch ? qualMatch[0] : "SD";
 
         let cleanName = `${tituloQuery} ${quality} [Via ${provider}]`;
 
@@ -220,7 +228,7 @@ app.get("/streams", async (req, res) => {
 
       streams.push({
         title: `[${item.origin}] ` + limparNome(item.name),
-        quality: item.name.match(/1080p|720p|2160p|4k/i)?.[0] || "HD",
+        quality: item.name.match(/1080p|720p|2160p|4k/i)?.[0] || "SD", // Se não tiver nada, marca como SD
         seeders: item.seeders,
         size: item.size,
         magnet,
@@ -242,5 +250,5 @@ app.get("/streams", async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log("🔥 API 5 MOTORES (INCLUINDO TORRENTIO) RODANDO!");
+  console.log("🔥 API 5 MOTORES (INCLUINDO TORRENTIO E FILMES ANTIGOS) RODANDO!");
 });
