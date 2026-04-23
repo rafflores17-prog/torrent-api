@@ -8,6 +8,15 @@ app.use(cors());
 
 const PORT = process.env.PORT || 3000;
 
+// 🔥 TRACKERS PÚBLICOS (O "Nitro" de Velocidade para os Downloads)
+const TRACKERS = [
+  "udp://tracker.openbittorrent.com:80/announce",
+  "udp://tracker.opentrackr.org:1337/announce",
+  "udp://tracker.coppersurfer.tk:6969/announce",
+  "udp://p4p.arenabg.com:1337/announce",
+  "udp://tracker.leechers-paradise.org:6969/announce"
+].map(tr => `&tr=${encodeURIComponent(tr)}`).join('');
+
 // ❌ REMOVE LIXO
 const blacklist = [
   "apk","android","windows","linux","mac","crack","software",
@@ -40,6 +49,9 @@ function scoreBR(nome) {
   return prioridadeBR.some(p => nome.includes(p)) ? 1 : 0;
 }
 
+// ==========================================================
+// 🕷️ FONTE 1: 1337x (Mantendo sua busca inteligente)
+// ==========================================================
 async function search1337x(query) {
   try {
     const url = `https://www.1377x.to/search/${encodeURIComponent(query)}/1/`;
@@ -56,7 +68,6 @@ async function search1337x(query) {
       const link = $(el).find("td.name a:nth-child(2)").attr("href");
       const seeders = parseInt($(el).find("td.seeds").text()) || 0;
       
-      // 🔥 Conserta o bug do tamanho pegando lixo
       let rawSize = $(el).find("td.size").text();
       let size = "N/A";
       if (rawSize.includes("GB")) size = rawSize.split("GB")[0] + " GB";
@@ -65,16 +76,16 @@ async function search1337x(query) {
       if (!name || !link) return;
       if (!ehFilme(name)) return;
 
-      results.push({ name, seeders, size, detail: "https://www.1377x.to" + link });
+      results.push({ name, seeders, size, detail: "https://www.1377x.to" + link, origin: "1337x" });
     });
 
-    return results;
+    return results.slice(0, 5);
   } catch (err) {
     return [];
   }
 }
 
-async function getMagnet(url) {
+async function getMagnet1337x(url) {
   try {
     const { data } = await axios.get(url, { headers: { "User-Agent": "Mozilla/5.0" }, timeout: 8000 });
     const $ = cheerio.load(data);
@@ -84,38 +95,100 @@ async function getMagnet(url) {
   }
 }
 
+// ==========================================================
+// 🏴‍☠️ FONTE 2: THE PIRATE BAY (Maior do mundo + Nitro)
+// ==========================================================
+async function searchPirateBay(query) {
+  try {
+    const url = `https://apibay.org/q.php?q=${encodeURIComponent(query)}`;
+    const { data } = await axios.get(url, { timeout: 8000 });
+    if (!data || data[0].id === '0') return [];
+
+    let results = [];
+    data.forEach(t => {
+      if (t.category.startsWith('2') && ehFilme(t.name)) {
+        // INJETANDO O NITRO (TRACKERS)
+        const magnet = `magnet:?xt=urn:btih:${t.info_hash}&dn=${encodeURIComponent(t.name)}${TRACKERS}`;
+        const sizeBytes = parseInt(t.size);
+        const sizeFormated = sizeBytes > 1073741824 ? (sizeBytes / 1073741824).toFixed(2) + " GB" : (sizeBytes / 1048576).toFixed(2) + " MB";
+        
+        results.push({ name: t.name, seeders: parseInt(t.seeders), size: sizeFormated, magnet, origin: "PirateBay" });
+      }
+    });
+    return results.slice(0, 5);
+  } catch (err) { return []; }
+}
+
+// ==========================================================
+// 🍿 FONTE 3: YTS API (Oficial + Nitro)
+// ==========================================================
+async function searchYTS(query) {
+  try {
+    const url = `https://yts.mx/api/v2/list_movies.json?query_term=${encodeURIComponent(query)}`;
+    const { data } = await axios.get(url, { timeout: 8000 });
+    if (!data.data || !data.data.movies) return [];
+
+    let results = [];
+    data.data.movies.forEach(movie => {
+      movie.torrents.forEach(t => {
+        const name = `${movie.title} ${t.quality} ${t.type} YTS`;
+        // INJETANDO O NITRO (TRACKERS)
+        const magnet = `magnet:?xt=urn:btih:${t.hash}&dn=${encodeURIComponent(movie.title)}${TRACKERS}`;
+        results.push({ name, seeders: t.seeds, size: t.size, magnet, origin: "YTS" });
+      });
+    });
+    return results;
+  } catch (err) { return []; }
+}
+
+// ==========================================================
+// 🚀 ROTA PRINCIPAL (O MEGAZORD)
+// ==========================================================
 app.get("/streams", async (req, res) => {
   const query = req.query.q;
   if (!query) return res.status(400).json({ error: "Informe um filme" });
 
   try {
-    // 🔥 BUSCAS INTELIGENTES (Removi o 'movie' em inglês para não vir espanhol)
+    // 🔥 BUSCAS INTELIGENTES NO 1337X
     const tentativas = [
       `${query} dublado`,
       `${query} dual`,
       `${query} pt-br`,
       `${query} 1080p`,
-      `${query}` // Se não achar nada, tenta só o nome limpo
+      `${query}`
     ];
 
-    let results = [];
+    let res1337x = [];
     for (let t of tentativas) {
       const r = await search1337x(t);
       if (r.length > 0) {
-        results = r;
-        break; // Achou? Para de pesquisar para ser rápido!
+        res1337x = r;
+        break; 
       }
     }
 
-    results = results.slice(0, 10); // Pega só os 10 primeiros para não travar
+    // 🔥 BUSCAS PARALELAS NO PIRATEBAY E YTS
+    const [resPirateBay, resYTS] = await Promise.all([
+      searchPirateBay(query),
+      searchYTS(query)
+    ]);
+
+    // Junta todas as fontes
+    let allResults = [...res1337x, ...resPirateBay, ...resYTS];
     let streams = [];
 
-    for (let item of results) {
-      const magnet = await getMagnet(item.detail);
+    // Puxa os Magnets (O 1337x precisa raspar o link, as outras já entregam direto)
+    for (let item of allResults) {
+      let magnet = item.magnet;
+      
+      if (!magnet && item.detail) {
+        magnet = await getMagnet1337x(item.detail);
+      }
+
       if (!magnet) continue;
 
       streams.push({
-        title: limparNome(item.name),
+        title: `[${item.origin}] ` + limparNome(item.name),
         quality: item.name.match(/1080p|720p|2160p|4k/i)?.[0] || "HD",
         seeders: item.seeders,
         size: item.size,
@@ -124,17 +197,23 @@ app.get("/streams", async (req, res) => {
       });
     }
 
+    // Ordena por Prioridade BR e depois por quantidade de seeders
     streams.sort((a, b) => {
       if (a.br !== b.br) return b.br - a.br;
       return b.seeders - a.seeders;
     });
 
+    if (streams.length === 0) {
+      return res.json({ query, total: 0, streams: [], message: "Nenhum resultado relevante encontrado" });
+    }
+
     res.json({ query, total: streams.length, streams });
+
   } catch (err) {
     res.status(500).json({ error: "Erro geral" });
   }
 });
 
 app.listen(PORT, () => {
-  console.log("🔥 API TORRENT MASTER rodando...");
+  console.log("🔥 API MEGAZORD + NITRO rodando na porta", PORT);
 });
